@@ -22,7 +22,7 @@ export default function Home() {
       icon: <ChefHat className="w-6 h-6" />,
     },
     {
-      title: "Assistant Manager",
+      title: "Sales Executive",
       description: "Pack orders, assign riders, and dispatch logistics.",
       href: "/logistics",
       icon: <PackageCheck className="w-6 h-6" />,
