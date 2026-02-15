@@ -25,6 +25,7 @@ export const create = mutation({
       salesManager: args.salesManager?.trim() || undefined,
       status: "NEW",
       createdAt: Date.now(),
+      assistantEnteredAt: Date.now(),
     });
   },
 });
@@ -56,12 +57,34 @@ export const updateStatus = mutation({
     riderCompanyName: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
+    const now = Date.now();
+    const existing = await ctx.db.get(args.id);
+    if (!existing) {
+      throw new Error("Order not found");
+    }
+
+    const timelinePatch: Record<string, number> = {};
+    if (args.status === "IN_PROGRESS") {
+      timelinePatch.assistantLeftAt = now;
+      timelinePatch.productionEnteredAt = now;
+    }
+
+    if (args.status === "READY") {
+      timelinePatch.productionLeftAt = now;
+      timelinePatch.assistantReenteredAt = now;
+    }
+
+    if (args.status === "COMPLETED") {
+      timelinePatch.assistantCompletedAt = now;
+    }
+
     await ctx.db.patch(args.id, {
       status: args.status as any,
       riderId: args.riderId,
       riderName: args.riderName,
       riderPhone: args.riderPhone,
       riderCompanyName: args.riderCompanyName,
+      ...timelinePatch,
     });
   },
 });

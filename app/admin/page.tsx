@@ -7,6 +7,26 @@ import { Trash2, Plus, Tag, BarChart3, LayoutList, TrendingUp, DollarSign, Calen
 import Link from "next/link";
 import { exportToCsv } from "@/lib/exportToCsv";
 
+const formatTimestamp = (value?: number) => (value ? new Date(value).toLocaleString() : "—");
+
+const formatDuration = (start?: number, end?: number) => {
+  if (!start || !end || end < start) return "—";
+  const totalMinutes = Math.floor((end - start) / 60000);
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+  if (hours === 0) return `${minutes}m`;
+  return `${hours}h ${minutes}m`;
+};
+
+const formatDurationMs = (value?: number) => {
+  if (!value || value < 0) return "—";
+  const totalMinutes = Math.floor(value / 60000);
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+  if (hours === 0) return `${minutes}m`;
+  return `${hours}h ${minutes}m`;
+};
+
 export default function AdminPage() {
   const [activeTab, setActiveTab] = useState<"inventory" | "analytics">("inventory");
 
@@ -54,10 +74,28 @@ export default function AdminPage() {
   const downloadAdminExport = () => {
     exportToCsv(
       "admin-full-details",
-      ["Type", "ID", "Name/Customer", "Phone", "Company", "Category/Status", "Amount", "Items", "Address", "Sales Manager", "Created At"],
       [
-        ...(products ?? []).map((p) => ["Product", p._id, p.name, "", "", p.category, p.price, "", "", "", ""]),
-        ...(riders ?? []).map((r) => ["Rider", r._id, r.name, r.phone, r.companyName, r.isActive ? "Active" : "Inactive", "", "", "", "", new Date(r.createdAt).toLocaleString()]),
+        "Type",
+        "ID",
+        "Name/Customer",
+        "Phone",
+        "Company",
+        "Category/Status",
+        "Amount",
+        "Items",
+        "Address",
+        "Sales Manager",
+        "Created At",
+        "Assistant Entered",
+        "Assistant Left",
+        "Production Entered",
+        "Production Left",
+        "Assistant Re-Entered",
+        "Assistant Completed",
+      ],
+      [
+        ...(products ?? []).map((p) => ["Product", p._id, p.name, "", "", p.category, p.price, "", "", "", "", "", "", "", "", "", ""]),
+        ...(riders ?? []).map((r) => ["Rider", r._id, r.name, r.phone, r.companyName, r.isActive ? "Active" : "Inactive", "", "", "", "", new Date(r.createdAt).toLocaleString(), "", "", "", "", "", ""]),
         ...(allOrders ?? []).map((o) => [
           "Order",
           o._id,
@@ -70,6 +108,12 @@ export default function AdminPage() {
           o.customerAddress,
           o.salesManager,
           new Date(o.createdAt).toLocaleString(),
+          formatTimestamp(o.assistantEnteredAt),
+          formatTimestamp(o.assistantLeftAt),
+          formatTimestamp(o.productionEnteredAt),
+          formatTimestamp(o.productionLeftAt),
+          formatTimestamp(o.assistantReenteredAt),
+          formatTimestamp(o.assistantCompletedAt),
         ]),
       ],
     );
@@ -121,7 +165,46 @@ export default function AdminPage() {
 
             <div className="bg-zinc-900/40 border border-white/10 rounded-2xl overflow-hidden">
               <div className="p-6 border-b border-white/5 flex justify-between"><h2 className="text-xl font-bold flex items-center gap-2"><Calendar className="w-5 h-5" /> Sales History</h2><span className="text-xs text-zinc-500">Showing last 100 orders</span></div>
-              <div className="overflow-x-auto"><table className="w-full text-left"><thead className="bg-black/20 text-xs text-zinc-500 uppercase"><tr><th className="px-6 py-4">Date/Time</th><th className="px-6 py-4">Customer</th><th className="px-6 py-4">Items</th><th className="px-6 py-4 text-right">Amount</th></tr></thead><tbody>{!completedOrders || completedOrders.length === 0 ? <tr><td colSpan={4} className="text-center py-10 text-zinc-500">No sales recorded yet.</td></tr> : completedOrders.map((order) => <tr key={order._id} className="border-t border-white/5"><td className="px-6 py-4">{new Date(order.createdAt).toLocaleString()}</td><td className="px-6 py-4">{order.customerName}</td><td className="px-6 py-4">{order.items.map((i) => `${i.quantity}x ${i.name}`).join(", ")}</td><td className="px-6 py-4 text-right">₦{order.totalAmount.toLocaleString()}</td></tr>)}</tbody></table></div>
+              <div className="overflow-x-auto">
+                <table className="w-full text-left">
+                  <thead className="bg-black/20 text-xs text-zinc-500 uppercase">
+                    <tr>
+                      <th className="px-6 py-4">Date/Time</th>
+                      <th className="px-6 py-4">Customer</th>
+                      <th className="px-6 py-4">Items</th>
+                      <th className="px-6 py-4">Timeline</th>
+                      <th className="px-6 py-4">Section Duration</th>
+                      <th className="px-6 py-4 text-right">Amount</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {!completedOrders || completedOrders.length === 0 ? (
+                      <tr><td colSpan={6} className="text-center py-10 text-zinc-500">No sales recorded yet.</td></tr>
+                    ) : completedOrders.map((order) => {
+                      const assistantTime = (order.assistantEnteredAt && order.assistantLeftAt ? order.assistantLeftAt - order.assistantEnteredAt : 0)
+                        + (order.assistantReenteredAt && order.assistantCompletedAt ? order.assistantCompletedAt - order.assistantReenteredAt : 0);
+
+                      return (
+                        <tr key={order._id} className="border-t border-white/5 align-top">
+                          <td className="px-6 py-4">{new Date(order.createdAt).toLocaleString()}</td>
+                          <td className="px-6 py-4">{order.customerName}</td>
+                          <td className="px-6 py-4">{order.items.map((i) => `${i.quantity}x ${i.name}`).join(", ")}</td>
+                          <td className="px-6 py-4 text-xs text-zinc-300 space-y-1">
+                            <p>Assistant: {formatTimestamp(order.assistantEnteredAt)} → {formatTimestamp(order.assistantLeftAt)}</p>
+                            <p>Production: {formatTimestamp(order.productionEnteredAt)} → {formatTimestamp(order.productionLeftAt)}</p>
+                            <p>Assistant (dispatch): {formatTimestamp(order.assistantReenteredAt)} → {formatTimestamp(order.assistantCompletedAt)}</p>
+                          </td>
+                          <td className="px-6 py-4 text-xs text-zinc-300 space-y-1">
+                            <p>Assistant total: {formatDurationMs(assistantTime)}</p>
+                            <p>Production: {formatDuration(order.productionEnteredAt, order.productionLeftAt)}</p>
+                          </td>
+                          <td className="px-6 py-4 text-right">₦{order.totalAmount.toLocaleString()}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
             </div>
           </div>
         )}
