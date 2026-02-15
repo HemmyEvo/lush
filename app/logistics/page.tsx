@@ -96,7 +96,7 @@ export default function AssistantPage() {
       <header className="border-b border-white/10 sticky top-0 z-50 bg-black/90 backdrop-blur-md">
         <div className="max-w-7xl mx-auto px-4 py-3 flex flex-wrap gap-3 justify-between items-center">
           <div className="flex items-center gap-3">
-            <h1 className="text-xl font-bold tracking-tight">Assistant</h1>
+            <h1 className="text-xl font-bold tracking-tight">Sales Executive</h1>
             {permission !== "granted" ? (
               <button onClick={requestPermission} className="bg-pink-600 p-2 rounded-full animate-pulse"><BellOff className="w-4 h-4 text-white" /></button>
             ) : (
