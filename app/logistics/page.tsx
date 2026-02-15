@@ -113,10 +113,10 @@ export default function AssistantPage() {
 
         <div className="max-w-7xl mx-auto px-4 pb-3 flex flex-wrap gap-2">
           {[
-            ["dispatch", "Dispatch", <Package key="d" className="w-4 h-4" />],
-            ["riders", "Riders", <Users key="r" className="w-4 h-4" />],
-            ["sales", "Sales", <Briefcase key="s" className="w-4 h-4" />],
-          ].map(([value, label, icon]) => (
+            { value: "dispatch", label: "Dispatch", icon: <Package className="w-4 h-4" /> },
+            { value: "riders", label: "Riders", icon: <Users className="w-4 h-4" /> },
+            { value: "sales", label: "Sales", icon: <Briefcase className="w-4 h-4" /> },
+          ].map(({ value, label, icon }) => (
             <button key={value} onClick={() => setMainTab(value as MainTab)} className={`px-4 py-2 rounded-lg text-sm font-bold flex items-center gap-2 ${mainTab === value ? "bg-zinc-800" : "text-zinc-500 hover:text-zinc-300"}`}>{icon}{label}</button>
           ))}
         </div>
@@ -151,7 +151,7 @@ export default function AssistantPage() {
               show={dispatchTab === "outgoing"}
               items={readyOrders ?? []}
               emptyText="Waiting for kitchen..."
-              action={(order) => <DispatchCard order={order} riders={riders ?? []} onDispatch={updateStatus} />}
+              action={(order) => <DispatchCard order={order} riders={riders ?? []} onDispatch={async (args) => { await updateStatus(args); }} />}
             />
           </div>
         )}
