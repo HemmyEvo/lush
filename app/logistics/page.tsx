@@ -71,7 +71,7 @@ export default function AssistantPage() {
     if ("serviceWorker" in navigator) {
       try {
         const registration = await navigator.serviceWorker.ready;
-        await registration.showNotification(title, { body, tag, renotify: true });
+        await registration.showNotification(title, { body, tag });
         return;
       } catch {
         // fall back to browser notifications when SW is unavailable.
