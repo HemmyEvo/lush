@@ -46,6 +46,12 @@ export default defineSchema({
     riderPhone: v.optional(v.string()),
     riderCompanyName: v.optional(v.string()),
     createdAt: v.number(),
+    assistantEnteredAt: v.optional(v.number()),
+    assistantLeftAt: v.optional(v.number()),
+    productionEnteredAt: v.optional(v.number()),
+    productionLeftAt: v.optional(v.number()),
+    assistantReenteredAt: v.optional(v.number()),
+    assistantCompletedAt: v.optional(v.number()),
   })
     .index("by_status", ["status"])
     .index("by_date", ["createdAt"])
