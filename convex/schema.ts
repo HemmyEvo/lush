@@ -2,7 +2,6 @@ import { defineSchema, defineTable } from "convex/server";
 import { v } from "convex/values";
 
 export default defineSchema({
-  // 1. PRODUCTS TABLE
   products: defineTable({
     name: v.string(),
     price: v.number(),
@@ -11,34 +10,44 @@ export default defineSchema({
     inStock: v.boolean(),
   }),
 
-  // 2. ORDERS TABLE
-  orders: defineTable({
-    // Customer Info (Collected at POS)
-    customerName: v.string(), 
-    customerAddress: v.string(), // New Field
-    
-    // The Cart
-    items: v.array(v.object({
-      id: v.id("products"),
-      name: v.string(),
-      quantity: v.number(),
-      price: v.number(),
-    })),
+  riders: defineTable({
+    name: v.string(),
+    phone: v.string(),
+    companyName: v.optional(v.string()),
+    isActive: v.boolean(),
+    createdAt: v.number(),
+  }).index("by_active", ["isActive"]),
 
-    totalAmount: v.number(),
-    
-    // Lifecycle Status
-    status: v.union(
-      v.literal("NEW"),           // Sales -> Assistant
-      v.literal("IN_PROGRESS"),   // Assistant -> Kitchen
-      v.literal("READY"),         // Kitchen -> Assistant
-      v.literal("COMPLETED")      // Assistant -> Rider
+  orders: defineTable({
+    customerName: v.string(),
+    customerAddress: v.optional(v.string()),
+    customerType: v.union(v.literal("DELIVERY"), v.literal("WALK_IN")),
+    salesManager: v.optional(v.string()),
+
+    items: v.array(
+      v.object({
+        id: v.id("products"),
+        name: v.string(),
+        quantity: v.number(),
+        price: v.number(),
+      }),
     ),
 
-    // Logistics
+    totalAmount: v.number(),
+    status: v.union(
+      v.literal("NEW"),
+      v.literal("IN_PROGRESS"),
+      v.literal("READY"),
+      v.literal("COMPLETED"),
+    ),
+
+    riderId: v.optional(v.id("riders")),
     riderName: v.optional(v.string()),
-    createdAt: v.number(), 
+    riderPhone: v.optional(v.string()),
+    riderCompanyName: v.optional(v.string()),
+    createdAt: v.number(),
   })
-  .index("by_status", ["status"]) 
-  .index("by_date", ["createdAt"]), // Useful for Admin sorting
+    .index("by_status", ["status"])
+    .index("by_date", ["createdAt"])
+    .index("by_customer_type", ["customerType"]),
 });
