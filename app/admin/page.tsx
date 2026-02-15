@@ -27,6 +27,25 @@ const formatDurationMs = (value?: number) => {
   return `${hours}h ${minutes}m`;
 };
 
+const getSectionTimeline = (order: {
+  createdAt?: number;
+  assistantEnteredAt?: number;
+  assistantLeftAt?: number;
+  productionEnteredAt?: number;
+  productionLeftAt?: number;
+  assistantReenteredAt?: number;
+  assistantCompletedAt?: number;
+}) => {
+  const assistantIn = order.assistantEnteredAt ?? order.createdAt;
+  const assistantOut = order.assistantLeftAt ?? order.productionEnteredAt;
+  const productionIn = order.productionEnteredAt ?? assistantOut;
+  const productionOut = order.productionLeftAt ?? order.assistantReenteredAt;
+  const dispatchIn = order.assistantReenteredAt ?? productionOut;
+  const dispatchOut = order.assistantCompletedAt;
+
+  return { assistantIn, assistantOut, productionIn, productionOut, dispatchIn, dispatchOut };
+};
+
 export default function AdminPage() {
   const [activeTab, setActiveTab] = useState<"inventory" | "analytics">("inventory");
 
@@ -181,8 +200,13 @@ export default function AdminPage() {
                     {!completedOrders || completedOrders.length === 0 ? (
                       <tr><td colSpan={6} className="text-center py-10 text-zinc-500">No sales recorded yet.</td></tr>
                     ) : completedOrders.map((order) => {
-                      const assistantTime = (order.assistantEnteredAt && order.assistantLeftAt ? order.assistantLeftAt - order.assistantEnteredAt : 0)
-                        + (order.assistantReenteredAt && order.assistantCompletedAt ? order.assistantCompletedAt - order.assistantReenteredAt : 0);
+                      const timeline = getSectionTimeline(order);
+                      const assistantSection = timeline.assistantIn && timeline.assistantOut
+                        ? timeline.assistantOut - timeline.assistantIn
+                        : 0;
+                      const dispatchSection = timeline.dispatchIn && timeline.dispatchOut
+                        ? timeline.dispatchOut - timeline.dispatchIn
+                        : 0;
 
                       return (
                         <tr key={order._id} className="border-t border-white/5 align-top">
@@ -190,13 +214,15 @@ export default function AdminPage() {
                           <td className="px-6 py-4">{order.customerName}</td>
                           <td className="px-6 py-4">{order.items.map((i) => `${i.quantity}x ${i.name}`).join(", ")}</td>
                           <td className="px-6 py-4 text-xs text-zinc-300 space-y-1">
-                            <p>Assistant: {formatTimestamp(order.assistantEnteredAt)} → {formatTimestamp(order.assistantLeftAt)}</p>
-                            <p>Production: {formatTimestamp(order.productionEnteredAt)} → {formatTimestamp(order.productionLeftAt)}</p>
-                            <p>Assistant (dispatch): {formatTimestamp(order.assistantReenteredAt)} → {formatTimestamp(order.assistantCompletedAt)}</p>
+                            <p>Assistant (in/out): {formatTimestamp(timeline.assistantIn)} → {formatTimestamp(timeline.assistantOut)}</p>
+                            <p>Production (in/out): {formatTimestamp(timeline.productionIn)} → {formatTimestamp(timeline.productionOut)}</p>
+                            <p>Dispatch (in/out): {formatTimestamp(timeline.dispatchIn)} → {formatTimestamp(timeline.dispatchOut)}</p>
                           </td>
                           <td className="px-6 py-4 text-xs text-zinc-300 space-y-1">
-                            <p>Assistant total: {formatDurationMs(assistantTime)}</p>
-                            <p>Production: {formatDuration(order.productionEnteredAt, order.productionLeftAt)}</p>
+                            <p>Assistant section: {formatDurationMs(assistantSection)}</p>
+                            <p>Production section: {formatDuration(timeline.productionIn, timeline.productionOut)}</p>
+                            <p>Dispatch section: {formatDuration(timeline.dispatchIn, timeline.dispatchOut)}</p>
+                            <p>Total handled: {formatDurationMs(assistantSection + dispatchSection + ((timeline.productionIn && timeline.productionOut) ? timeline.productionOut - timeline.productionIn : 0))}</p>
                           </td>
                           <td className="px-6 py-4 text-right">₦{order.totalAmount.toLocaleString()}</td>
                         </tr>

@@ -2,19 +2,21 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 "use client";
 
-import { useMemo, useRef, useState, useEffect } from "react";
+import { useMemo, useRef, useState, useEffect, useCallback } from "react";
 import { useMutation, useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api";
-import { Bell, BellOff, CheckCircle2, Package, Plus, Save, Users, Download, Briefcase } from "lucide-react";
+import { Bell, BellOff, CheckCircle2, Package, Plus, Save, Users, Download, Briefcase, ClipboardList } from "lucide-react";
 import Link from "next/link";
 import { exportToCsv } from "@/lib/exportToCsv";
+import useSound from "use-sound";
 
-type MainTab = "dispatch" | "riders" | "sales";
+type MainTab = "dispatch" | "riders" | "sales" | "records";
 type DispatchTab = "incoming" | "outgoing";
 
 export default function AssistantPage() {
   const [mainTab, setMainTab] = useState<MainTab>("dispatch");
   const [dispatchTab, setDispatchTab] = useState<DispatchTab>("incoming");
+  const [readyDetailsTab, setReadyDetailsTab] = useState<"orders" | "riders">("orders");
 
   const newOrders = useQuery(api.orders.getByStatus, { status: "NEW" });
   const readyOrders = useQuery(api.orders.getByStatus, { status: "READY" });
@@ -25,35 +27,136 @@ export default function AssistantPage() {
   const createRider = useMutation(api.riders.create);
 
   const [permission, setPermission] = useState("default");
-  const prevOrderCount = useRef(0);
+  const [soundEnabled, setSoundEnabled] = useState(false);
+  const prevIncomingOrderCount = useRef(0);
+  const prevReadyOrderCount = useRef(0);
+  const [playNewOrderSound] = useSound("/sounds/ding.mp3", { volume: 0.8, interrupt: true, soundEnabled });
+  const [playReadyOrderSound] = useSound("/sounds/ding.mp3", { volume: 1, interrupt: true, soundEnabled });
+
+  const registerServiceWorker = useCallback(async () => {
+    if (typeof window === "undefined" || !("serviceWorker" in navigator)) return null;
+
+    try {
+      const registration = await navigator.serviceWorker.register("/sw.js", { scope: "/" });
+      await registration.update();
+      return registration;
+    } catch (error) {
+      console.error("SW registration failed", error);
+      return null;
+    }
+  }, []);
 
   useEffect(() => {
     if (typeof window !== "undefined" && "Notification" in window) {
       setPermission(Notification.permission);
     }
-    if (typeof window !== "undefined" && "serviceWorker" in navigator) {
-      navigator.serviceWorker.register("/sw.js").catch((error) => console.error("SW registration failed", error));
-    }
+
+    void registerServiceWorker();
+  }, [registerServiceWorker]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    const unlockSound = () => setSoundEnabled(true);
+    window.addEventListener("pointerdown", unlockSound, { once: true });
+
+    return () => window.removeEventListener("pointerdown", unlockSound);
   }, []);
+
+  const notifyOrderUpdate = useCallback(async (title: string, body: string, tag: string) => {
+    if (permission !== "granted") return;
+
+    if (typeof window === "undefined") return;
+
+    if ("serviceWorker" in navigator) {
+      try {
+        const registration = await navigator.serviceWorker.ready;
+        await registration.showNotification(title, { body, tag, renotify: true });
+        return;
+      } catch {
+        // fall back to browser notifications when SW is unavailable.
+      }
+    }
+
+    new Notification(title, { body, tag });
+  }, [permission]);
 
   const requestPermission = async () => {
     if (!("Notification" in window)) return alert("Browser does not support notifications");
+
+    setSoundEnabled(true);
+    playNewOrderSound({ forceSoundEnabled: true });
+
     const result = await Notification.requestPermission();
     setPermission(result);
+
+    if (result !== "granted") {
+      alert("Notification permission was not granted.");
+      return;
+    }
+
+    await registerServiceWorker();
+    await notifyOrderUpdate("Notifications Enabled 🔔", "You will now receive logistics order alerts.", "notification-enabled");
   };
 
   useEffect(() => {
     if (!newOrders) return;
-    if (newOrders.length > prevOrderCount.current) {
-      new Audio("/sounds/ding.mp3").play().catch(() => null);
-      if (permission === "granted") {
-        navigator.serviceWorker?.ready
-          .then((reg) => reg.showNotification("New Order! 🍧", { body: "Assistant has new incoming order(s).", tag: "new-order" }))
-          .catch(() => new Notification("New Order! 🍧", { body: "Check Incoming tab." }));
-      }
+    if (newOrders.length > prevIncomingOrderCount.current) {
+      playNewOrderSound();
+      void notifyOrderUpdate("New Order! 🍧", "Assistant has new incoming order(s).", "new-order");
     }
-    prevOrderCount.current = newOrders.length;
-  }, [newOrders, permission]);
+    prevIncomingOrderCount.current = newOrders.length;
+  }, [newOrders, notifyOrderUpdate, playNewOrderSound]);
+
+  useEffect(() => {
+    if (!readyOrders) return;
+    if (readyOrders.length > prevReadyOrderCount.current) {
+      playReadyOrderSound();
+      void notifyOrderUpdate("Order Ready ✅", "A kitchen order is now ready for dispatch.", "ready-order");
+    }
+    prevReadyOrderCount.current = readyOrders.length;
+  }, [notifyOrderUpdate, playReadyOrderSound, readyOrders]);
+
+
+  const riderAssignments = useMemo(
+    () => (completedOrders ?? []).filter((order) => order.riderName || order.riderPhone || order.riderCompanyName),
+    [completedOrders],
+  );
+
+  const downloadReadyOrders = () => {
+    exportToCsv(
+      "ready-order-details",
+      ["Order ID", "Customer", "Customer Type", "Address", "Sales Manager", "Status", "Items", "Total", "Created At"],
+      (readyOrders ?? []).map((order) => [
+        order._id,
+        order.customerName,
+        order.customerType,
+        order.customerAddress || "",
+        order.salesManager || "",
+        order.status,
+        order.items.map((item) => `${item.quantity}x ${item.name}`).join(" | "),
+        order.totalAmount,
+        new Date(order.createdAt).toLocaleString(),
+      ]),
+    );
+  };
+
+  const downloadRiderAssignments = () => {
+    exportToCsv(
+      "rider-assignments",
+      ["Order ID", "Customer", "Customer Type", "Rider", "Rider Phone", "Company", "Address", "Completed At"],
+      riderAssignments.map((order) => [
+        order._id,
+        order.customerName,
+        order.customerType,
+        order.riderName || "",
+        order.riderPhone || "",
+        order.riderCompanyName || "",
+        order.customerAddress || "",
+        order.assistantCompletedAt ? new Date(order.assistantCompletedAt).toLocaleString() : "",
+      ]),
+    );
+  };
 
   const walkInManaged = useMemo(
     () => (completedOrders ?? []).filter((order) => order.customerType === "WALK_IN" && order.salesManager),
@@ -116,6 +219,7 @@ export default function AssistantPage() {
             { value: "dispatch", label: "Dispatch", icon: <Package className="w-4 h-4" /> },
             { value: "riders", label: "Riders", icon: <Users className="w-4 h-4" /> },
             { value: "sales", label: "Sales", icon: <Briefcase className="w-4 h-4" /> },
+            { value: "records", label: "Ready Details", icon: <ClipboardList className="w-4 h-4" /> },
           ].map(({ value, label, icon }) => (
             <button key={value} onClick={() => setMainTab(value as MainTab)} className={`px-4 py-2 rounded-lg text-sm font-bold flex items-center gap-2 ${mainTab === value ? "bg-zinc-800" : "text-zinc-500 hover:text-zinc-300"}`}>{icon}{label}</button>
           ))}
@@ -183,6 +287,67 @@ export default function AssistantPage() {
             </div>
           </div>
         )}
+
+        {mainTab === "records" && (
+          <div className="space-y-4">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="flex gap-2">
+                <button onClick={() => setReadyDetailsTab("orders")} className={`px-3 py-2 text-xs rounded-lg border ${readyDetailsTab === "orders" ? "bg-zinc-800 border-zinc-600" : "border-white/10"}`}>Order & Customer Info</button>
+                <button onClick={() => setReadyDetailsTab("riders")} className={`px-3 py-2 text-xs rounded-lg border ${readyDetailsTab === "riders" ? "bg-zinc-800 border-zinc-600" : "border-white/10"}`}>Rider Assignments</button>
+              </div>
+              {readyDetailsTab === "orders" ? (
+                <button onClick={downloadReadyOrders} className="px-3 py-2 text-xs border border-white/10 rounded-lg hover:bg-white/10 flex items-center gap-1"><Download className="w-3 h-3" /> Download Orders</button>
+              ) : (
+                <button onClick={downloadRiderAssignments} className="px-3 py-2 text-xs border border-white/10 rounded-lg hover:bg-white/10 flex items-center gap-1"><Download className="w-3 h-3" /> Download Riders</button>
+              )}
+            </div>
+
+            {readyDetailsTab === "orders" ? (
+              <div className="bg-zinc-900/40 border border-white/10 rounded-xl p-4 overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead className="text-zinc-500"><tr><th className="text-left py-2">Order</th><th className="text-left py-2">Customer</th><th className="text-left py-2">Type</th><th className="text-left py-2">Address</th><th className="text-left py-2">Items</th><th className="text-left py-2">Sales</th><th className="text-right py-2">Amount</th></tr></thead>
+                  <tbody>
+                    {(readyOrders ?? []).length === 0 ? (
+                      <tr><td colSpan={7} className="py-4 text-zinc-500">No ready orders currently.</td></tr>
+                    ) : (readyOrders ?? []).map((order) => (
+                      <tr key={order._id} className="border-t border-white/5">
+                        <td className="py-2 text-xs">#{order._id.slice(-6)}</td>
+                        <td className="py-2">{order.customerName}</td>
+                        <td className="py-2">{order.customerType === "WALK_IN" ? "Walk-in" : "Delivery"}</td>
+                        <td className="py-2">{order.customerAddress || "—"}</td>
+                        <td className="py-2">{order.items.map((item) => `${item.quantity}x ${item.name}`).join(", ")}</td>
+                        <td className="py-2">{order.salesManager || "—"}</td>
+                        <td className="py-2 text-right">₦{order.totalAmount.toLocaleString()}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <div className="bg-zinc-900/40 border border-white/10 rounded-xl p-4 overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead className="text-zinc-500"><tr><th className="text-left py-2">Order</th><th className="text-left py-2">Customer</th><th className="text-left py-2">Type</th><th className="text-left py-2">Rider</th><th className="text-left py-2">Phone</th><th className="text-left py-2">Company</th><th className="text-left py-2">Completed</th></tr></thead>
+                  <tbody>
+                    {riderAssignments.length === 0 ? (
+                      <tr><td colSpan={7} className="py-4 text-zinc-500">No rider assignments yet.</td></tr>
+                    ) : riderAssignments.map((order) => (
+                      <tr key={order._id} className="border-t border-white/5">
+                        <td className="py-2 text-xs">#{order._id.slice(-6)}</td>
+                        <td className="py-2">{order.customerName}</td>
+                        <td className="py-2">{order.customerType === "WALK_IN" ? "Walk-in" : "Delivery"}</td>
+                        <td className="py-2">{order.riderName || "—"}</td>
+                        <td className="py-2">{order.riderPhone || "—"}</td>
+                        <td className="py-2">{order.riderCompanyName || "—"}</td>
+                        <td className="py-2">{order.assistantCompletedAt ? new Date(order.assistantCompletedAt).toLocaleString() : "—"}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        )}
+
       </main>
     </div>
   );
@@ -219,21 +384,35 @@ function DispatchCard({ order, riders, onDispatch }: { order: any; riders: any[]
     setRiderCompanyName(rider.companyName ?? "");
   };
 
+  const isWalkIn = order.customerType === "WALK_IN";
+
   const handleDispatch = async () => {
-    if (!riderName.trim() || !riderPhone.trim()) return alert("Provide rider name and phone number.");
-    await onDispatch({ id: order._id, status: "COMPLETED", riderName, riderPhone, riderCompanyName: riderCompanyName || undefined });
+    if (!isWalkIn && (!riderName.trim() || !riderPhone.trim())) return alert("Provide rider name and phone number.");
+    await onDispatch({
+      id: order._id,
+      status: "COMPLETED",
+      riderName: isWalkIn ? undefined : riderName,
+      riderPhone: isWalkIn ? undefined : riderPhone,
+      riderCompanyName: isWalkIn ? undefined : (riderCompanyName || undefined),
+    });
   };
 
   return (
     <div className="space-y-2">
-      <select onChange={(e) => handleSelectRider(e.target.value)} className="w-full bg-black border border-zinc-700 rounded-lg p-2 text-sm">
-        <option value="">Select existing rider</option>
-        {riders.filter((rider) => rider.isActive).map((rider) => <option key={rider._id} value={rider._id}>{rider.name} • {rider.phone}</option>)}
-      </select>
-      <input value={riderName} onChange={(e) => setRiderName(e.target.value)} placeholder="Rider name" className="w-full bg-black border border-zinc-700 rounded-lg p-2 text-sm" />
-      <input value={riderPhone} onChange={(e) => setRiderPhone(e.target.value)} placeholder="Rider phone" className="w-full bg-black border border-zinc-700 rounded-lg p-2 text-sm" />
-      <input value={riderCompanyName} onChange={(e) => setRiderCompanyName(e.target.value)} placeholder="Logistics company (optional)" className="w-full bg-black border border-zinc-700 rounded-lg p-2 text-sm" />
-      <button onClick={handleDispatch} className="w-full py-2 bg-blue-600 hover:bg-blue-500 rounded-lg flex justify-center"><CheckCircle2 className="w-4 h-4" /></button>
+      {isWalkIn ? (
+        <div className="text-xs rounded-lg border border-emerald-500/40 bg-emerald-900/20 p-2 text-emerald-300">Walk-in order: rider assignment is not required.</div>
+      ) : (
+        <>
+          <select onChange={(e) => handleSelectRider(e.target.value)} className="w-full bg-black border border-zinc-700 rounded-lg p-2 text-sm">
+            <option value="">Select existing rider</option>
+            {riders.filter((rider) => rider.isActive).map((rider) => <option key={rider._id} value={rider._id}>{rider.name} • {rider.phone}</option>)}
+          </select>
+          <input value={riderName} onChange={(e) => setRiderName(e.target.value)} placeholder="Rider name" className="w-full bg-black border border-zinc-700 rounded-lg p-2 text-sm" />
+          <input value={riderPhone} onChange={(e) => setRiderPhone(e.target.value)} placeholder="Rider phone" className="w-full bg-black border border-zinc-700 rounded-lg p-2 text-sm" />
+          <input value={riderCompanyName} onChange={(e) => setRiderCompanyName(e.target.value)} placeholder="Logistics company (optional)" className="w-full bg-black border border-zinc-700 rounded-lg p-2 text-sm" />
+        </>
+      )}
+      <button onClick={handleDispatch} className="w-full py-2 bg-blue-600 hover:bg-blue-500 rounded-lg flex justify-center text-xs font-semibold">{isWalkIn ? "Complete walk-in pickup" : <CheckCircle2 className="w-4 h-4" />}</button>
     </div>
   );
 }
