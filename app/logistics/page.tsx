@@ -13,12 +13,10 @@ import {
   ThumbsDown, 
   CheckCircle2, 
   Download,
-  User,
   MapPin,
   ArrowRight
 } from "lucide-react";
 import Link from "next/link";
-import { exportToCsv } from "@/lib/exportToCsv";
 import useSound from "use-sound";
 
 // --- TYPES ---
@@ -40,6 +38,7 @@ export default function AssistantPage() {
   const [reviewSearch, setReviewSearch] = useState("");
   const [reviewReason, setReviewReason] = useState("");
   const [selectedOrderForReview, setSelectedOrderForReview] = useState<any>(null);
+  const [downloadMenuOpen, setDownloadMenuOpen] = useState(false);
 
   // --- DATA ---
   const readyOrders = useQuery(api.orders.getByStatus, { status: "READY" }); // Kitchen Output
@@ -78,25 +77,74 @@ export default function AssistantPage() {
   // 1. Download Logic
   const handleDownload = (type: "WALK_IN" | "DELIVERY" | "ALL") => {
     if (!completedOrders) return;
-    
+
     let data = completedOrders;
     if (type !== "ALL") {
-      data = completedOrders.filter(o => o.customerType === type);
+      data = completedOrders.filter((o) => o.customerType === type);
     }
 
-    const rows = data.map(o => [
-      o._id,
-      new Date(o.createdAt).toLocaleString(),
-      o.customerName,
-      o.customerType,
-      o.customerAddress || "N/A",
-      o.items.map((i: any) => `${i.quantity}x ${i.name}`).join(", "),
-      o.totalAmount,
-      o.riderName || "N/A",
-      o.riderPhone || "N/A"
-    ]);
+    const today = new Date();
+    const reportRows = data
+      .map((o) => `
+        <tr>
+          <td>${o._id}</td>
+          <td>${new Date(o.createdAt).toLocaleString()}</td>
+          <td>${o.customerName}</td>
+          <td>${o.customerType.replace("_", " ")}</td>
+          <td>${o.customerAddress || "N/A"}</td>
+          <td>${o.items.map((i: any) => `${i.quantity}x ${i.name}`).join(", ")}</td>
+          <td>₦${o.totalAmount.toLocaleString()}</td>
+          <td>${o.riderName || "N/A"}</td>
+          <td>${o.riderPhone || "N/A"}</td>
+        </tr>
+      `)
+      .join("");
 
-    exportToCsv(`sales-${type.toLowerCase()}`, ["ID", "Date", "Customer", "Type", "Address", "Items", "Total", "Rider", "Rider Phone"], rows);
+    const reportHtml = `
+      <html>
+        <head>
+          <title>Logistics Report</title>
+          <style>
+            body { font-family: Arial, sans-serif; padding: 24px; color: #111; }
+            h1 { margin: 0 0 8px; font-size: 24px; }
+            .meta { color: #4b5563; margin-bottom: 16px; }
+            table { width: 100%; border-collapse: collapse; font-size: 12px; }
+            th, td { border: 1px solid #d1d5db; padding: 8px; text-align: left; vertical-align: top; }
+            th { background: #1d4ed8; color: #fff; }
+            tr:nth-child(even) { background: #f9fafb; }
+            @media print { @page { size: A4 landscape; margin: 12mm; } }
+          </style>
+        </head>
+        <body>
+          <h1>Logistics Dispatch Report</h1>
+          <div class="meta">Generated: ${today.toLocaleString()} | Filter: ${type.replace("_", " ")} | Orders: ${data.length}</div>
+          <table>
+            <thead>
+              <tr>
+                <th>ID</th><th>Date</th><th>Customer</th><th>Type</th><th>Address</th><th>Items</th><th>Total</th><th>Rider</th><th>Rider Phone</th>
+              </tr>
+            </thead>
+            <tbody>${reportRows}</tbody>
+          </table>
+        </body>
+      </html>
+    `;
+
+    const printWindow = window.open("", "_blank", "noopener,noreferrer");
+    if (!printWindow) {
+      alert("Please allow popups to download the report as PDF.");
+      return;
+    }
+
+    printWindow.document.write(reportHtml);
+    printWindow.document.close();
+    printWindow.focus();
+    setTimeout(() => {
+      printWindow.print();
+      printWindow.close();
+    }, 350);
+
+    setDownloadMenuOpen(false);
   };
 
   // 2. FIFO Sorting (Oldest First)
@@ -156,7 +204,7 @@ export default function AssistantPage() {
 
     // 1. Create or Get Rider
     // The mutation 'createRider' should return ID if exists, or create new if not
-    await createRider({ 
+    const riderId = await createRider({ 
       name: riderName, 
       phone: riderPhone, 
       companyName: riderCompany 
@@ -166,6 +214,7 @@ export default function AssistantPage() {
     await updateStatus({
       id: processingOrder._id,
       status: "COMPLETED",
+      riderId,
       riderName: riderName,
       riderPhone: riderPhone,
       riderCompanyName: riderCompany
@@ -179,11 +228,24 @@ export default function AssistantPage() {
 
   // D. Submit Bad Review
   const handleSubmitReview = async () => {
-    if (!selectedOrderForReview || !reviewReason || !selectedOrderForReview.riderId) return;
+    if (!selectedOrderForReview || !reviewReason.trim()) return;
+
+    const riderId =
+      selectedOrderForReview.riderId ||
+      riders?.find(
+        (r) =>
+          r.phone === selectedOrderForReview.riderPhone ||
+          (r.name === selectedOrderForReview.riderName && !!selectedOrderForReview.riderName)
+      )?._id;
+
+    if (!riderId) {
+      alert("Rider record not found. Please verify rider details on the order.");
+      return;
+    }
     
     await addRiderReview({
-      riderId: selectedOrderForReview.riderId, // Assuming schema links order to rider ID now, or we lookup by phone
-      review: `${new Date().toLocaleDateString()}: ${reviewReason} (Order #${selectedOrderForReview._id.slice(-4)})`
+      riderId,
+      review: `${new Date().toLocaleDateString()}: ${reviewReason.trim()} (Order #${selectedOrderForReview._id.slice(-4)})`
     });
 
     setReviewReason("");
@@ -205,11 +267,14 @@ export default function AssistantPage() {
             </div>
           </div>
           <div className="flex gap-2">
-             <div className="dropdown relative group">
-                <button className="px-4 py-2 bg-zinc-800 border border-white/10 rounded-lg text-sm flex items-center gap-2 hover:bg-zinc-700">
+             <div className="relative">
+                <button
+                  onClick={() => setDownloadMenuOpen((prev) => !prev)}
+                  className="px-4 py-2 bg-zinc-800 border border-white/10 rounded-lg text-sm flex items-center gap-2 hover:bg-zinc-700"
+                >
                   <Download className="w-4 h-4" /> Download Records
                 </button>
-                <div className="absolute right-0 mt-2 w-48 bg-zinc-900 border border-white/10 rounded-xl shadow-xl hidden group-hover:block overflow-hidden">
+                <div className={`absolute right-0 mt-2 w-52 bg-zinc-900 border border-white/10 rounded-xl shadow-xl overflow-hidden z-50 ${downloadMenuOpen ? "block" : "hidden"}`}>
                   <button onClick={() => handleDownload("WALK_IN")} className="block w-full text-left px-4 py-3 text-sm hover:bg-white/10">Walk-in Only</button>
                   <button onClick={() => handleDownload("DELIVERY")} className="block w-full text-left px-4 py-3 text-sm hover:bg-white/10">Delivery Only</button>
                   <button onClick={() => handleDownload("ALL")} className="block w-full text-left px-4 py-3 text-sm hover:bg-white/10 border-t border-white/10">Combined All</button>
