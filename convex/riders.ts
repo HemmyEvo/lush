@@ -1,10 +1,10 @@
+// convex/riders.ts
 import { mutation, query } from "./_generated/server";
 import { v } from "convex/values";
 
 export const list = query({
-  args: {},
   handler: async (ctx) => {
-    return await ctx.db.query("riders").order("desc").collect();
+    return await ctx.db.query("riders").collect();
   },
 });
 
@@ -15,36 +15,34 @@ export const create = mutation({
     companyName: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
-    await ctx.db.insert("riders", {
+    const existing = await ctx.db
+      .query("riders")
+      .withIndex("by_phone", (q) => q.eq("phone", args.phone))
+      .first();
+
+    if (existing) return existing._id; // Return existing ID if found
+
+    return await ctx.db.insert("riders", {
       ...args,
-      companyName: args.companyName?.trim() || undefined,
       isActive: true,
+      reviews: [],
       createdAt: Date.now(),
     });
   },
 });
 
-export const update = mutation({
+export const addReview = mutation({
   args: {
-    id: v.id("riders"),
-    name: v.string(),
-    phone: v.string(),
-    companyName: v.optional(v.string()),
-    isActive: v.boolean(),
+    riderId: v.id("riders"),
+    review: v.string(),
   },
   handler: async (ctx, args) => {
-    await ctx.db.patch(args.id, {
-      name: args.name,
-      phone: args.phone,
-      companyName: args.companyName?.trim() || undefined,
-      isActive: args.isActive,
-    });
-  },
-});
+    const rider = await ctx.db.get(args.riderId);
+    if (!rider) throw new Error("Rider not found");
 
-export const remove = mutation({
-  args: { id: v.id("riders") },
-  handler: async (ctx, args) => {
-    await ctx.db.delete(args.id);
+    const currentReviews = rider.reviews || [];
+    await ctx.db.patch(args.riderId, {
+      reviews: [...currentReviews, args.review],
+    });
   },
 });
