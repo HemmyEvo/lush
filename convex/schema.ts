@@ -15,8 +15,9 @@ export default defineSchema({
     phone: v.string(),
     companyName: v.optional(v.string()),
     isActive: v.boolean(),
+reviews: v.optional(v.array(v.string())), 
     createdAt: v.number(),
-  }).index("by_active", ["isActive"]),
+   }).index("by_phone", ["phone"]),
 
   orders: defineTable({
     // --- Customer Info ---
