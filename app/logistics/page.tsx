@@ -27,26 +27,40 @@ export default function AssistantPage() {
   const createRider = useMutation(api.riders.create);
 
   const [permission, setPermission] = useState("default");
+  const [soundEnabled, setSoundEnabled] = useState(false);
   const prevIncomingOrderCount = useRef(0);
   const prevReadyOrderCount = useRef(0);
-  const [playNewOrderSound] = useSound("/sounds/ding.mp3", { volume: 0.8 });
-  const [playReadyOrderSound] = useSound("/sounds/ding.mp3", { volume: 1 });
+  const [playNewOrderSound] = useSound("/sounds/ding.mp3", { volume: 0.8, interrupt: true, soundEnabled });
+  const [playReadyOrderSound] = useSound("/sounds/ding.mp3", { volume: 1, interrupt: true, soundEnabled });
+
+  const registerServiceWorker = useCallback(async () => {
+    if (typeof window === "undefined" || !("serviceWorker" in navigator)) return null;
+
+    try {
+      const registration = await navigator.serviceWorker.register("/sw.js", { scope: "/" });
+      await registration.update();
+      return registration;
+    } catch (error) {
+      console.error("SW registration failed", error);
+      return null;
+    }
+  }, []);
 
   useEffect(() => {
     if (typeof window !== "undefined" && "Notification" in window) {
       setPermission(Notification.permission);
     }
 
-    if (typeof window !== "undefined" && "serviceWorker" in navigator) {
-      const registerWorker = async () => {
-        try {
-          await navigator.serviceWorker.register("/sw.js", { scope: "/" });
-        } catch (error) {
-          console.error("SW registration failed", error);
-        }
-      };
-      registerWorker();
-    }
+    void registerServiceWorker();
+  }, [registerServiceWorker]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    const unlockSound = () => setSoundEnabled(true);
+    window.addEventListener("pointerdown", unlockSound, { once: true });
+
+    return () => window.removeEventListener("pointerdown", unlockSound);
   }, []);
 
   const notifyOrderUpdate = useCallback(async (title: string, body: string, tag: string) => {
@@ -69,15 +83,27 @@ export default function AssistantPage() {
 
   const requestPermission = async () => {
     if (!("Notification" in window)) return alert("Browser does not support notifications");
+
+    setSoundEnabled(true);
+    playNewOrderSound({ forceSoundEnabled: true });
+
     const result = await Notification.requestPermission();
     setPermission(result);
+
+    if (result !== "granted") {
+      alert("Notification permission was not granted.");
+      return;
+    }
+
+    await registerServiceWorker();
+    await notifyOrderUpdate("Notifications Enabled 🔔", "You will now receive logistics order alerts.", "notification-enabled");
   };
 
   useEffect(() => {
     if (!newOrders) return;
     if (newOrders.length > prevIncomingOrderCount.current) {
       playNewOrderSound();
-      notifyOrderUpdate("New Order! 🍧", "Assistant has new incoming order(s).", "new-order");
+      void notifyOrderUpdate("New Order! 🍧", "Assistant has new incoming order(s).", "new-order");
     }
     prevIncomingOrderCount.current = newOrders.length;
   }, [newOrders, notifyOrderUpdate, playNewOrderSound]);
@@ -86,7 +112,7 @@ export default function AssistantPage() {
     if (!readyOrders) return;
     if (readyOrders.length > prevReadyOrderCount.current) {
       playReadyOrderSound();
-      notifyOrderUpdate("Order Ready ✅", "A kitchen order is now ready for dispatch.", "ready-order");
+      void notifyOrderUpdate("Order Ready ✅", "A kitchen order is now ready for dispatch.", "ready-order");
     }
     prevReadyOrderCount.current = readyOrders.length;
   }, [notifyOrderUpdate, playReadyOrderSound, readyOrders]);
