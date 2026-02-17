@@ -48,7 +48,7 @@ export const getCompleted = query({
       .query("orders")
       .withIndex("by_status", (q) => q.eq("status", "COMPLETED"))
       .order("desc")
-      .take(100); 
+      .collect(); 
   },
 });
 
