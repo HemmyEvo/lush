@@ -19,11 +19,13 @@ export default defineSchema({
   }).index("by_active", ["isActive"]),
 
   orders: defineTable({
+    // --- Customer Info ---
     customerName: v.string(),
-    customerAddress: v.optional(v.string()),
+    customerAddress: v.optional(v.string()), // Required for delivery
     customerType: v.union(v.literal("DELIVERY"), v.literal("WALK_IN")),
-    salesManager: v.optional(v.string()),
+    salesManager: v.optional(v.string()), // Name of POS user
 
+    // --- Cart Items ---
     items: v.array(
       v.object({
         id: v.id("products"),
@@ -32,28 +34,30 @@ export default defineSchema({
         price: v.number(),
       }),
     ),
-
     totalAmount: v.number(),
+
+    // --- Order Flow Status ---
+    // NEW: Sent from POS, visible in Kitchen
+    // READY: Done in Kitchen, visible to Assistant/Rider
+    // COMPLETED: Handed over/Delivered
     status: v.union(
-      v.literal("NEW"),
-      v.literal("IN_PROGRESS"),
-      v.literal("READY"),
-      v.literal("COMPLETED"),
+      v.literal("NEW"), 
+      v.literal("READY"), 
+      v.literal("COMPLETED")
     ),
 
+    // --- Logistics (Filled by Assistant) ---
     riderId: v.optional(v.id("riders")),
     riderName: v.optional(v.string()),
     riderPhone: v.optional(v.string()),
     riderCompanyName: v.optional(v.string()),
-    createdAt: v.number(),
-    assistantEnteredAt: v.optional(v.number()),
-    assistantLeftAt: v.optional(v.number()),
-    productionEnteredAt: v.optional(v.number()),
-    productionLeftAt: v.optional(v.number()),
-    assistantReenteredAt: v.optional(v.number()),
-    assistantCompletedAt: v.optional(v.number()),
+
+    // --- Timestamps ---
+    createdAt: v.number(), // Set by POS
+    productionCompletedAt: v.optional(v.number()), // Set by Kitchen
+    assistantCompletedAt: v.optional(v.number()), // Set by Assistant
   })
-    .index("by_status", ["status"])
-    .index("by_date", ["createdAt"])
+    .index("by_status", ["status"]) // For filtering lists
+    .index("by_date", ["createdAt"]) // For reports
     .index("by_customer_type", ["customerType"]),
 });
