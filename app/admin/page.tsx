@@ -1,59 +1,34 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 "use client";
 
 import { useMemo, useState } from "react";
 import { useMutation, useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api";
-import { Trash2, Plus, Tag, BarChart3, LayoutList, TrendingUp, DollarSign, Calendar, Download } from "lucide-react";
+import { 
+  Trash2, 
+  Plus, 
+  Tag, 
+  BarChart3, 
+  LayoutList, 
+  TrendingUp, 
+  DollarSign, 
+  Calendar, 
+  Download,
+  FileDown
+} from "lucide-react";
 import Link from "next/link";
-import { exportToCsv } from "@/lib/exportToCsv";
+import jsPDF from "jspdf";
+import autoTable from "jspdf-autotable";
 
-const formatTimestamp = (value?: number) => (value ? new Date(value).toLocaleString() : "—");
-
-const formatDuration = (start?: number, end?: number) => {
-  if (!start || !end || end < start) return "—";
-  const totalMinutes = Math.floor((end - start) / 60000);
-  const hours = Math.floor(totalMinutes / 60);
-  const minutes = totalMinutes % 60;
-  if (hours === 0) return `${minutes}m`;
-  return `${hours}h ${minutes}m`;
-};
-
-const formatDurationMs = (value?: number) => {
-  if (!value || value < 0) return "—";
-  const totalMinutes = Math.floor(value / 60000);
-  const hours = Math.floor(totalMinutes / 60);
-  const minutes = totalMinutes % 60;
-  if (hours === 0) return `${minutes}m`;
-  return `${hours}h ${minutes}m`;
-};
-
-const getSectionTimeline = (order: {
-  createdAt?: number;
-  assistantEnteredAt?: number;
-  assistantLeftAt?: number;
-  productionEnteredAt?: number;
-  productionLeftAt?: number;
-  assistantReenteredAt?: number;
-  assistantCompletedAt?: number;
-}) => {
-  const assistantIn = order.assistantEnteredAt ?? order.createdAt;
-  const assistantOut = order.assistantLeftAt ?? order.productionEnteredAt;
-  const productionIn = order.productionEnteredAt ?? assistantOut;
-  const productionOut = order.productionLeftAt ?? order.assistantReenteredAt;
-  const dispatchIn = order.assistantReenteredAt ?? productionOut;
-  const dispatchOut = order.assistantCompletedAt;
-
-  return { assistantIn, assistantOut, productionIn, productionOut, dispatchIn, dispatchOut };
-};
+// Helper for display
+const formatTime = (ts?: number) => ts ? new Date(ts).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}) : "-";
 
 export default function AdminPage() {
-  const [activeTab, setActiveTab] = useState<"inventory" | "analytics">("inventory");
+  const [activeTab, setActiveTab] = useState<"inventory" | "analytics">("analytics"); // Default to analytics for checking sales
 
   const products = useQuery(api.products.get);
   const completedOrders = useQuery(api.orders.getCompleted);
-  const allOrders = useQuery(api.orders.getAll);
-  const riders = useQuery(api.riders.list);
-
+  
   const addProduct = useMutation(api.products.add);
   const deleteProduct = useMutation(api.products.remove);
 
@@ -61,6 +36,7 @@ export default function AdminPage() {
   const [price, setPrice] = useState("");
   const [category, setCategory] = useState("");
 
+  // --- STATISTICS CALCULATION ---
   const stats = useMemo(() => {
     if (!completedOrders) return { revenue: 0, count: 0, topProduct: "N/A" };
     let revenue = 0;
@@ -74,7 +50,11 @@ export default function AdminPage() {
     });
 
     const top = Object.entries(productCounts).sort((a, b) => b[1] - a[1])[0];
-    return { revenue, count: completedOrders.length, topProduct: top ? `${top[0]} (${top[1]} sold)` : "No Sales Yet" };
+    return { 
+      revenue, 
+      count: completedOrders.length, 
+      topProduct: top ? `${top[0]} (${top[1]})` : "No Sales Yet" 
+    };
   }, [completedOrders]);
 
   const existingCategories = useMemo(() => {
@@ -90,64 +70,87 @@ export default function AdminPage() {
     setPrice("");
   };
 
-  const downloadAdminExport = () => {
-    exportToCsv(
-      "admin-full-details",
-      [
-        "Type",
-        "ID",
-        "Name/Customer",
-        "Phone",
-        "Company",
-        "Category/Status",
-        "Amount",
-        "Items",
-        "Address",
-        "Sales Manager",
-        "Created At",
-        "Assistant Entered",
-        "Assistant Left",
-        "Production Entered",
-        "Production Left",
-        "Assistant Re-Entered",
-        "Assistant Completed",
-      ],
-      [
-        ...(products ?? []).map((p) => ["Product", p._id, p.name, "", "", p.category, p.price, "", "", "", "", "", "", "", "", "", ""]),
-        ...(riders ?? []).map((r) => ["Rider", r._id, r.name, r.phone, r.companyName, r.isActive ? "Active" : "Inactive", "", "", "", "", new Date(r.createdAt).toLocaleString(), "", "", "", "", "", ""]),
-        ...(allOrders ?? []).map((o) => [
-          "Order",
-          o._id,
-          o.customerName,
-          o.riderPhone,
-          o.riderCompanyName,
-          `${o.customerType} / ${o.status}`,
-          o.totalAmount,
-          o.items.map((item) => `${item.quantity}x ${item.name}`).join(" | "),
-          o.customerAddress,
-          o.salesManager,
-          new Date(o.createdAt).toLocaleString(),
-          formatTimestamp(o.assistantEnteredAt),
-          formatTimestamp(o.assistantLeftAt),
-          formatTimestamp(o.productionEnteredAt),
-          formatTimestamp(o.productionLeftAt),
-          formatTimestamp(o.assistantReenteredAt),
-          formatTimestamp(o.assistantCompletedAt),
-        ]),
-      ],
-    );
+  // --- PDF GENERATION ---
+  const downloadSalesPDF = () => {
+    if (!completedOrders || completedOrders.length === 0) return alert("No sales data to export.");
+
+    const doc = new jsPDF();
+    const today = new Date();
+    const dateStr = today.toLocaleDateString("en-GB").replace(/\//g, "-"); // 17-02-2026
+
+    // 1. Header
+    doc.setFontSize(20);
+    doc.text("Daily Sales Report", 14, 20);
+    
+    doc.setFontSize(10);
+    doc.text(`Generated: ${new Date().toLocaleString()}`, 14, 28);
+
+    // 2. Summary Card
+    doc.setDrawColor(200);
+    doc.setFillColor(245, 245, 245);
+    doc.roundedRect(14, 35, 180, 25, 3, 3, 'FD');
+    
+    doc.setFontSize(12);
+    doc.text(`Total Revenue: N${stats.revenue.toLocaleString()}`, 20, 48);
+    doc.text(`Total Orders: ${stats.count}`, 80, 48);
+    doc.text(`Top Product: ${stats.topProduct}`, 130, 48);
+
+    // 3. Table Data
+    const tableBody = completedOrders.map(order => [
+      `#${order._id.slice(-4)}`,
+      formatTime(order.createdAt),
+      formatTime(order.productionCompletedAt),
+      formatTime(order.assistantCompletedAt),
+      order.customerName,
+      order.items.map(i => `${i.quantity}x ${i.name}`).join(", "),
+      `N${order.totalAmount.toLocaleString()}`
+    ]);
+
+    // 4. Draw Table
+    autoTable(doc, {
+      startY: 65,
+      head: [['ID', 'In', 'Ready', 'Out', 'Customer', 'Items', 'Amount']],
+      body: tableBody,
+      theme: 'grid',
+      headStyles: { fillColor: [0, 0, 0] },
+      styles: { fontSize: 8 },
+      columnStyles: {
+        5: { cellWidth: 60 } // Make items column wider
+      }
+    });
+
+    // 5. Save
+    doc.save(`${dateStr}-sales.pdf`);
   };
 
   return (
     <div className="min-h-screen bg-black text-white font-sans pb-20">
       <header className="border-b border-white/10 sticky top-0 z-50 bg-black/80 backdrop-blur-md">
         <div className="max-w-7xl mx-auto px-4 py-4 flex flex-col md:flex-row justify-between md:items-center gap-4">
-          <div className="flex items-center gap-3"><div className="bg-zinc-800 p-2 rounded-lg border border-white/10"><Tag className="w-5 h-5" /></div><h1 className="text-2xl font-bold">Admin Dashboard</h1></div>
-          <div className="flex items-center gap-2 bg-zinc-900 p-1 rounded-lg border border-white/10 self-start md:self-auto">
-            <button onClick={() => setActiveTab("inventory")} className={`px-4 py-2 rounded-md text-sm font-bold flex items-center gap-2 ${activeTab === "inventory" ? "bg-zinc-700" : "text-zinc-500"}`}><LayoutList className="w-4 h-4" /> Inventory</button>
-            <button onClick={() => setActiveTab("analytics")} className={`px-4 py-2 rounded-md text-sm font-bold flex items-center gap-2 ${activeTab === "analytics" ? "bg-pink-900/30 text-pink-400" : "text-zinc-500"}`}><BarChart3 className="w-4 h-4" /> Reports & Sales</button>
+          <div className="flex items-center gap-3">
+            <div className="bg-zinc-800 p-2 rounded-lg border border-white/10"><Tag className="w-5 h-5" /></div>
+            <h1 className="text-2xl font-bold">Admin Dashboard</h1>
           </div>
-          <div className="flex gap-2"><button onClick={downloadAdminExport} className="px-4 py-2 border border-white/10 rounded-lg text-sm hover:bg-white/5 flex items-center gap-2"><Download className="w-4 h-4" /> Download all details</button><Link href="/"><button className="px-4 py-2 border border-white/10 rounded-lg text-sm hover:bg-white/5">Exit</button></Link></div>
+          
+          <div className="flex items-center gap-2 bg-zinc-900 p-1 rounded-lg border border-white/10 self-start md:self-auto">
+            <button onClick={() => setActiveTab("analytics")} className={`px-4 py-2 rounded-md text-sm font-bold flex items-center gap-2 ${activeTab === "analytics" ? "bg-white text-black" : "text-zinc-500"}`}>
+               <BarChart3 className="w-4 h-4" /> Sales History
+            </button>
+            <button onClick={() => setActiveTab("inventory")} className={`px-4 py-2 rounded-md text-sm font-bold flex items-center gap-2 ${activeTab === "inventory" ? "bg-white text-black" : "text-zinc-500"}`}>
+               <LayoutList className="w-4 h-4" /> Inventory
+            </button>
+          </div>
+
+          <div className="flex gap-2">
+            {activeTab === "analytics" && (
+               <button onClick={downloadSalesPDF} className="px-4 py-2 bg-green-600 hover:bg-green-500 text-white font-bold rounded-lg text-sm flex items-center gap-2">
+                 <FileDown className="w-4 h-4" /> Download Report (PDF)
+               </button>
+            )}
+            <Link href="/">
+              <button className="px-4 py-2 border border-white/10 rounded-lg text-sm hover:bg-white/5">Exit</button>
+            </Link>
+          </div>
         </div>
       </header>
 
@@ -176,58 +179,63 @@ export default function AdminPage() {
 
         {activeTab === "analytics" && (
           <div className="space-y-8">
+            {/* Top Cards */}
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-              <div className="bg-gradient-to-br from-green-900/40 to-black border border-green-500/20 p-6 rounded-2xl"><div className="flex items-center gap-2 text-green-400 mb-2"><DollarSign className="w-5 h-5" />Total Revenue</div><div className="text-3xl font-bold">₦{stats.revenue.toLocaleString()}</div></div>
-              <div className="bg-gradient-to-br from-blue-900/40 to-black border border-blue-500/20 p-6 rounded-2xl"><div className="flex items-center gap-2 text-blue-400 mb-2"><TrendingUp className="w-5 h-5" />Total Orders</div><div className="text-3xl font-bold">{stats.count}</div></div>
-              <div className="bg-gradient-to-br from-purple-900/40 to-black border border-purple-500/20 p-6 rounded-2xl"><div className="flex items-center gap-2 text-purple-400 mb-2"><Tag className="w-5 h-5" />Top Product</div><div className="text-2xl font-bold truncate">{stats.topProduct}</div></div>
+              <div className="bg-zinc-900/60 border border-green-900/30 p-6 rounded-2xl">
+                 <div className="flex items-center gap-2 text-green-400 mb-2 font-mono text-sm uppercase"><DollarSign className="w-4 h-4" /> Total Revenue</div>
+                 <div className="text-3xl font-bold">₦{stats.revenue.toLocaleString()}</div>
+              </div>
+              <div className="bg-zinc-900/60 border border-blue-900/30 p-6 rounded-2xl">
+                 <div className="flex items-center gap-2 text-blue-400 mb-2 font-mono text-sm uppercase"><TrendingUp className="w-4 h-4" /> Total Orders</div>
+                 <div className="text-3xl font-bold">{stats.count}</div>
+              </div>
+              <div className="bg-zinc-900/60 border border-purple-900/30 p-6 rounded-2xl">
+                 <div className="flex items-center gap-2 text-purple-400 mb-2 font-mono text-sm uppercase"><Tag className="w-4 h-4" /> Best Seller</div>
+                 <div className="text-xl font-bold truncate" title={stats.topProduct}>{stats.topProduct}</div>
+              </div>
             </div>
 
+            {/* Sales Table */}
             <div className="bg-zinc-900/40 border border-white/10 rounded-2xl overflow-hidden">
-              <div className="p-6 border-b border-white/5 flex justify-between"><h2 className="text-xl font-bold flex items-center gap-2"><Calendar className="w-5 h-5" /> Sales History</h2><span className="text-xs text-zinc-500">Showing last 100 orders</span></div>
+              <div className="p-6 border-b border-white/5 flex flex-wrap justify-between items-center gap-4">
+                <div>
+                   <h2 className="text-xl font-bold flex items-center gap-2"><Calendar className="w-5 h-5" /> Full Sales History</h2>
+                   <p className="text-sm text-zinc-500">Download the PDF report before starting a new business day.</p>
+                </div>
+                <button onClick={downloadSalesPDF} className="text-xs bg-zinc-800 hover:bg-zinc-700 px-3 py-2 rounded-lg border border-white/10 flex items-center gap-2">
+                   <Download className="w-3 h-3" /> Export PDF
+                </button>
+              </div>
+              
               <div className="overflow-x-auto">
                 <table className="w-full text-left">
-                  <thead className="bg-black/20 text-xs text-zinc-500 uppercase">
+                  <thead className="bg-black/40 text-xs text-zinc-400 uppercase font-bold tracking-wider">
                     <tr>
-                      <th className="px-6 py-4">Date/Time</th>
+                      <th className="px-6 py-4">Order ID</th>
+                      <th className="px-6 py-4">Time In</th>
+                      <th className="px-6 py-4">Ready At</th>
+                      <th className="px-6 py-4">Completed</th>
                       <th className="px-6 py-4">Customer</th>
                       <th className="px-6 py-4">Items</th>
-                      <th className="px-6 py-4">Timeline</th>
-                      <th className="px-6 py-4">Section Duration</th>
-                      <th className="px-6 py-4 text-right">Amount</th>
+                      <th className="px-6 py-4 text-right">Total</th>
                     </tr>
                   </thead>
-                  <tbody>
+                  <tbody className="divide-y divide-white/5 text-sm">
                     {!completedOrders || completedOrders.length === 0 ? (
-                      <tr><td colSpan={6} className="text-center py-10 text-zinc-500">No sales recorded yet.</td></tr>
-                    ) : completedOrders.map((order) => {
-                      const timeline = getSectionTimeline(order);
-                      const assistantSection = timeline.assistantIn && timeline.assistantOut
-                        ? timeline.assistantOut - timeline.assistantIn
-                        : 0;
-                      const dispatchSection = timeline.dispatchIn && timeline.dispatchOut
-                        ? timeline.dispatchOut - timeline.dispatchIn
-                        : 0;
-
-                      return (
-                        <tr key={order._id} className="border-t border-white/5 align-top">
-                          <td className="px-6 py-4">{new Date(order.createdAt).toLocaleString()}</td>
-                          <td className="px-6 py-4">{order.customerName}</td>
-                          <td className="px-6 py-4">{order.items.map((i) => `${i.quantity}x ${i.name}`).join(", ")}</td>
-                          <td className="px-6 py-4 text-xs text-zinc-300 space-y-1">
-                            <p>Assistant (in/out): {formatTimestamp(timeline.assistantIn)} → {formatTimestamp(timeline.assistantOut)}</p>
-                            <p>Production (in/out): {formatTimestamp(timeline.productionIn)} → {formatTimestamp(timeline.productionOut)}</p>
-                            <p>Dispatch (in/out): {formatTimestamp(timeline.dispatchIn)} → {formatTimestamp(timeline.dispatchOut)}</p>
-                          </td>
-                          <td className="px-6 py-4 text-xs text-zinc-300 space-y-1">
-                            <p>Assistant section: {formatDurationMs(assistantSection)}</p>
-                            <p>Production section: {formatDuration(timeline.productionIn, timeline.productionOut)}</p>
-                            <p>Dispatch section: {formatDuration(timeline.dispatchIn, timeline.dispatchOut)}</p>
-                            <p>Total handled: {formatDurationMs(assistantSection + dispatchSection + ((timeline.productionIn && timeline.productionOut) ? timeline.productionOut - timeline.productionIn : 0))}</p>
-                          </td>
-                          <td className="px-6 py-4 text-right">₦{order.totalAmount.toLocaleString()}</td>
-                        </tr>
-                      );
-                    })}
+                      <tr><td colSpan={7} className="text-center py-12 text-zinc-500">No completed sales yet.</td></tr>
+                    ) : completedOrders.map((order) => (
+                      <tr key={order._id} className="hover:bg-white/5 transition-colors">
+                        <td className="px-6 py-4 font-mono text-zinc-500">#{order._id.slice(-4)}</td>
+                        <td className="px-6 py-4 text-zinc-300">{formatTime(order.createdAt)}</td>
+                        <td className="px-6 py-4 text-zinc-300">{formatTime(order.productionCompletedAt)}</td>
+                        <td className="px-6 py-4 text-zinc-300">{formatTime(order.assistantCompletedAt)}</td>
+                        <td className="px-6 py-4 font-medium">{order.customerName}</td>
+                        <td className="px-6 py-4 text-zinc-400 max-w-xs truncate">
+                          {order.items.map((i) => `${i.quantity}x ${i.name}`).join(", ")}
+                        </td>
+                        <td className="px-6 py-4 text-right font-bold">₦{order.totalAmount.toLocaleString()}</td>
+                      </tr>
+                    ))}
                   </tbody>
                 </table>
               </div>
