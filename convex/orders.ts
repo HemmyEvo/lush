@@ -58,6 +58,7 @@ export const updateStatus = mutation({
     id: v.id("orders"),
     status: v.union(v.literal("READY"), v.literal("COMPLETED")),
     // Optional rider details when completing
+    riderId: v.optional(v.id("riders")),
     riderName: v.optional(v.string()),
     riderPhone: v.optional(v.string()),
     riderCompanyName: v.optional(v.string()),
@@ -65,13 +66,22 @@ export const updateStatus = mutation({
   handler: async (ctx, args) => {
     const { id, status, ...riderDetails } = args;
 
-    const updates: any = { status };
+    const updates: {
+      status: "READY" | "COMPLETED";
+      productionCompletedAt?: number;
+      assistantCompletedAt?: number;
+      riderId?: typeof args.riderId;
+      riderName?: string;
+      riderPhone?: string;
+      riderCompanyName?: string;
+    } = { status };
 
     if (status === "READY") {
       updates.productionCompletedAt = Date.now();
     } else if (status === "COMPLETED") {
       updates.assistantCompletedAt = Date.now();
       // Add rider details if provided
+      if (riderDetails.riderId) updates.riderId = riderDetails.riderId;
       if (riderDetails.riderName) updates.riderName = riderDetails.riderName;
       if (riderDetails.riderPhone) updates.riderPhone = riderDetails.riderPhone;
       if (riderDetails.riderCompanyName) updates.riderCompanyName = riderDetails.riderCompanyName;

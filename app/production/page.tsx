@@ -1,15 +1,12 @@
-/* eslint-disable react-hooks/exhaustive-deps */
 /* eslint-disable @typescript-eslint/no-explicit-any */
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useMemo } from "react";
 import { useQuery, useMutation } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import { 
-  ChefHat, 
   CheckCircle2, 
   Clock, 
-  ArrowLeft,
   Volume2,
   VolumeX,
   Flame,
@@ -47,6 +44,11 @@ export default function ProductionPage() {
   }, [newOrders, soundEnabled, hasInteracted]);
 
   // --- 3. PDF REPORT GENERATION ---
+  const sortedNewOrders = useMemo(() => {
+    if (!newOrders) return [];
+    return [...newOrders].sort((a, b) => a._creationTime - b._creationTime);
+  }, [newOrders]);
+
   const generateDailyReport = () => {
     if (!completedOrders && !newOrders) return;
     
@@ -179,27 +181,42 @@ export default function ProductionPage() {
         </div>
       </header>
 
-      <main className="max-w-7xl mx-auto p-6 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
-        {newOrders?.map((order) => (
+      <main className="max-w-7xl mx-auto p-6">
+        <div className="flex items-center gap-2 text-zinc-400 text-sm mb-4">
+          <CheckCircle2 className="w-4 h-4 text-orange-500" />
+          Tickets are sorted FIFO (oldest first). Start with the highlighted card.
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+        {sortedNewOrders.map((order, idx) => (
           <KitchenTicket 
             key={order._id} 
-            order={order} 
-            onComplete={() => updateStatus({ id: order._id, status: "READY" })} 
+            order={order}
+            isNext={idx === 0}
+            onComplete={() => updateStatus({ id: order._id, status: "READY" })}
           />
         ))}
+        </div>
       </main>
     </div>
   );
 }
 
-function KitchenTicket({ order, onComplete }: { order: any, onComplete: () => void }) {
+function KitchenTicket({ order, onComplete, isNext }: { order: any, onComplete: () => void, isNext: boolean }) {
   const [loading, setLoading] = useState(false);
+  const [now, setNow] = useState(() => Date.now());
+
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(Date.now()), 30000);
+    return () => window.clearInterval(timer);
+  }, []);
+
   // Use _creationTime for the timer
-  const elapsedMinutes = Math.floor((Date.now() - order._creationTime) / 60000);
+  const elapsedMinutes = Math.floor((now - order._creationTime) / 60000);
   const createdTime = new Date(order._creationTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 
   return (
-    <div className="bg-zinc-900/80 border border-white/10 rounded-2xl overflow-hidden flex flex-col shadow-xl">
+    <div className={`relative rounded-2xl overflow-hidden flex flex-col shadow-xl border ${isNext ? "bg-zinc-900 border-orange-400/60 shadow-[0_0_30px_-10px_rgba(251,146,60,0.45)]" : "bg-zinc-900/80 border-white/10"}`} >
+      {isNext && <div className="absolute -top-3 left-4 bg-orange-500 text-black text-[10px] font-bold px-2 py-1 rounded-full">NEXT IN LINE</div>}
       <div className={`p-4 border-b border-white/5 flex justify-between items-center ${elapsedMinutes > 20 ? "bg-red-900/40" : "bg-white/5"}`}>
         <div>
           <span className="font-bold text-zinc-300">#{order._id.slice(-4)}</span>
