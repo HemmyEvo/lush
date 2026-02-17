@@ -1,12 +1,12 @@
-/* eslint-disable @typescript-eslint/no-explicit-any */
 import { mutation, query } from "./_generated/server";
 import { v } from "convex/values";
 
+// 1. Create Order (POS -> Kitchen)
 export const create = mutation({
   args: {
     customerName: v.string(),
-    customerAddress: v.optional(v.string()),
     customerType: v.union(v.literal("DELIVERY"), v.literal("WALK_IN")),
+    customerAddress: v.optional(v.string()),
     salesManager: v.optional(v.string()),
     items: v.array(
       v.object({
@@ -19,83 +19,64 @@ export const create = mutation({
     totalAmount: v.number(),
   },
   handler: async (ctx, args) => {
-    await ctx.db.insert("orders", {
+    return await ctx.db.insert("orders", {
       ...args,
-      customerAddress: args.customerAddress?.trim() || undefined,
-      salesManager: args.salesManager?.trim() || undefined,
-      status: "NEW",
+      status: "NEW", // DIRECTLY TO PRODUCTION
       createdAt: Date.now(),
-      assistantEnteredAt: Date.now(),
     });
   },
 });
 
+// 2. Get Orders by Status (Used by Kitchen & Assistant)
 export const getByStatus = query({
-  args: { status: v.string() },
+  args: { status: v.union(v.literal("NEW"), v.literal("READY"), v.literal("COMPLETED")) },
   handler: async (ctx, args) => {
     return await ctx.db
       .query("orders")
-      .withIndex("by_status", (q) => q.eq("status", args.status as any))
+      .withIndex("by_status", (q) => q.eq("status", args.status))
+      .order("desc") // Newest first
       .collect();
   },
 });
 
-export const getAll = query({
-  args: {},
+// 3. Get Completed Orders (For Reports)
+export const getCompleted = query({
   handler: async (ctx) => {
-    return await ctx.db.query("orders").withIndex("by_date").order("desc").take(500);
+    // We limit to last 100 to prevent crashing the report generator on huge datasets
+    // In a real app, you'd filter by date range
+    return await ctx.db
+      .query("orders")
+      .withIndex("by_status", (q) => q.eq("status", "COMPLETED"))
+      .order("desc")
+      .take(100); 
   },
 });
 
+// 4. Update Status (Kitchen -> Ready -> Assistant -> Completed)
 export const updateStatus = mutation({
   args: {
     id: v.id("orders"),
-    status: v.string(),
-    riderId: v.optional(v.id("riders")),
+    status: v.union(v.literal("READY"), v.literal("COMPLETED")),
+    // Optional rider details when completing
     riderName: v.optional(v.string()),
     riderPhone: v.optional(v.string()),
     riderCompanyName: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
-    const now = Date.now();
-    const existing = await ctx.db.get(args.id);
-    if (!existing) {
-      throw new Error("Order not found");
+    const { id, status, ...riderDetails } = args;
+
+    const updates: any = { status };
+
+    if (status === "READY") {
+      updates.productionCompletedAt = Date.now();
+    } else if (status === "COMPLETED") {
+      updates.assistantCompletedAt = Date.now();
+      // Add rider details if provided
+      if (riderDetails.riderName) updates.riderName = riderDetails.riderName;
+      if (riderDetails.riderPhone) updates.riderPhone = riderDetails.riderPhone;
+      if (riderDetails.riderCompanyName) updates.riderCompanyName = riderDetails.riderCompanyName;
     }
 
-    const timelinePatch: Record<string, number> = {};
-    if (args.status === "IN_PROGRESS") {
-      timelinePatch.assistantLeftAt = now;
-      timelinePatch.productionEnteredAt = now;
-    }
-
-    if (args.status === "READY") {
-      timelinePatch.productionLeftAt = now;
-      timelinePatch.assistantReenteredAt = now;
-    }
-
-    if (args.status === "COMPLETED") {
-      timelinePatch.assistantCompletedAt = now;
-    }
-
-    await ctx.db.patch(args.id, {
-      status: args.status as any,
-      riderId: args.riderId,
-      riderName: args.riderName,
-      riderPhone: args.riderPhone,
-      riderCompanyName: args.riderCompanyName,
-      ...timelinePatch,
-    });
-  },
-});
-
-export const getCompleted = query({
-  args: {},
-  handler: async (ctx) => {
-    return await ctx.db
-      .query("orders")
-      .withIndex("by_status", (q) => q.eq("status", "COMPLETED"))
-      .order("desc")
-      .take(100);
+    await ctx.db.patch(id, updates);
   },
 });
